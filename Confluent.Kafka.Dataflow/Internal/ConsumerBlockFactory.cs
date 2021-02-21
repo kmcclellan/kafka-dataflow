@@ -8,10 +8,14 @@
     class ConsumerBlockFactory<TKey, TValue>
     {
         private readonly IConsumer<TKey, TValue> consumer;
+        private readonly ClientState<ITargetBlock<TopicPartitionOffset>> clientState;
 
-        public ConsumerBlockFactory(IConsumer<TKey, TValue> consumer)
+        public ConsumerBlockFactory(
+            IConsumer<TKey, TValue> consumer,
+            ClientState<ITargetBlock<TopicPartitionOffset>> clientState)
         {
             this.consumer = consumer;
+            this.clientState = clientState;
         }
 
         public ISourceBlock<KeyValuePair<TKey, TValue>> GetSource()
@@ -23,21 +27,37 @@
                 BoundedCapacity = 1,
             });
 
-            var completionSource = new TaskCompletionSource<byte>();
             return new CustomSource<KeyValuePair<TKey, TValue>>(
                 buffer,
-                completionSource,
-                () => this.StartConsuming(buffer, completionSource.Task));
+                this.clientState.CompletionSource,
+                () => this.StartConsuming(buffer));
+        }
+
+        public ISourceBlock<TopicPartitionOffset> GetOffsetSource()
+        {
+            var buffer = new BufferBlock<TopicPartitionOffset>();
+            this.clientState.State = buffer;
+            return new CustomSource<TopicPartitionOffset>(buffer, this.clientState.CompletionSource);
+        }
+
+        public ITargetBlock<TopicPartitionOffset> GetOffsetTarget()
+        {
+            var processor = new ActionBlock<TopicPartitionOffset>(
+                x => this.consumer.StoreOffset(new TopicPartitionOffset(x.TopicPartition, x.Offset + 1)));
+
+            return new CustomTarget<TopicPartitionOffset>(
+                processor,
+                this.ContinueWithCommit(processor.Completion));
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Dataflow fault")]
-        async void StartConsuming(ITargetBlock<KeyValuePair<TKey, TValue>> target, Task completion)
+        async void StartConsuming(ITargetBlock<KeyValuePair<TKey, TValue>> target)
         {
             try
             {
                 // Continue on thread pool.
                 await Task.Yield();
-                while (!completion.IsCompleted)
+                while (!this.clientState.CompletionSource.Task.IsCompleted)
                 {
                     var result = this.consumer.Consume(100);
                     if (result != null)
@@ -47,18 +67,29 @@
                         {
                             await target.SendAsync(kvp);
                         }
+
+                        // Target should never postpone (unbounded).
+                        this.clientState.State?.Post(result.TopicPartitionOffset);
                     }
                 }
 
                 // Observe any exceptions.
-                await completion;
+                await this.clientState.CompletionSource.Task;
             }
             catch (Exception exception)
             {
                 target.Fault(exception);
+                this.clientState.State?.Fault(exception);
             }
 
             target.Complete();
+            this.clientState.State?.Complete();
+        }
+
+        async Task ContinueWithCommit(Task completion)
+        {
+            await completion;
+            this.consumer.Commit();
         }
     }
 }
