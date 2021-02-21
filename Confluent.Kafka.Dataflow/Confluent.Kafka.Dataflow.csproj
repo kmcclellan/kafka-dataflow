@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>AllEnabledByDefault</AnalysisMode>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CA1014</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Title>Kafka Dataflow</Title>
+    <Authors>Kyle McClellan</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/kmcclellan/kafka-dataflow</PackageProjectUrl>
+    <Description>An extension of Confluent.Kafka for use with Microsoft.Extensions.Dataflow.</Description>
+    <PackageReleaseNotes>https://github.com/kmcclellan/kafka-dataflow/releases/v$(Version)</PackageReleaseNotes>
+    <Copyright>%A9 2021 Kyle McClellan</Copyright>
+    <PackageTags>kafka;confluent;dataflow</PackageTags>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/kmcclellan/kafka-dataflow.git</RepositoryUrl>
+  </PropertyGroup>
+
+</Project>
