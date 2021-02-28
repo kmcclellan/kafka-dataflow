@@ -56,13 +56,16 @@
             return this.GetBatchTarget<TopicPartitionOffset>(
                 offsets =>
                 {
-                    var commitOffsets = new List<TopicPartitionOffset>();
+                    // Track the latest offset per partition.
+                    // (Client seems to unable to handle a large number of offsets).
+                    var commitOffsets = new Dictionary<TopicPartition, TopicPartitionOffset>();
                     foreach (var offset in offsets)
                     {
-                        commitOffsets.Add(new TopicPartitionOffset(offset.TopicPartition, offset.Offset + 1));
+                        commitOffsets[offset.TopicPartition] = 
+                            new TopicPartitionOffset(offset.TopicPartition, offset.Offset + 1);
                     }
 
-                    this.producer.SendOffsetsToTransaction(commitOffsets, consumerGroup, Timeout.InfiniteTimeSpan);
+                    this.producer.SendOffsetsToTransaction(commitOffsets.Values, consumerGroup, Timeout.InfiniteTimeSpan);
                 },
                 options);
         }

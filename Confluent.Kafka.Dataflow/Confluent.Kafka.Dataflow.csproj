@@ -22,6 +22,8 @@
     <PackageTags>kafka;confluent;dataflow</PackageTags>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/kmcclellan/kafka-dataflow.git</RepositoryUrl>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <ItemGroup>
