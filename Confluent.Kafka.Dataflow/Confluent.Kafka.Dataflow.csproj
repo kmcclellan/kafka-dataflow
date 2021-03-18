@@ -24,6 +24,7 @@
     <RepositoryUrl>https://github.com/kmcclellan/kafka-dataflow.git</RepositoryUrl>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedAllSources>true</EmbedAllSources>
   </PropertyGroup>
 
   <ItemGroup>
