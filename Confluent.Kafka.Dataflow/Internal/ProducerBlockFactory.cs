@@ -9,21 +9,41 @@
     class ProducerBlockFactory
     {
         readonly TaskCompletionSource<byte> completionSource = new();
-        Func<int, Task>? batchHandler;
+        ITargetBlock<IReadOnlyList<TopicPartitionOffset>>? offsetTarget;
+        readonly List<Func<int, ICollection<TopicPartitionOffset>, Task>> batchHandlers = new();
 
-        public static ITargetBlock<KeyValuePair<TKey, TValue>> GetTarget<TKey, TValue>(
+        public ITargetBlock<KeyValuePair<TKey, TValue>> GetTarget<TKey, TValue>(
             IProducer<TKey, TValue> producer,
             TopicPartition topicPartition)
         {
-            // No delivery handler support at this time. (Implement as a separate source block.)
             var processor = new ActionBlock<KeyValuePair<TKey, TValue>>(
                 kvp => producer.Produce(
                     topicPartition,
-                    new Message<TKey, TValue> { Key = kvp.Key, Value = kvp.Value }));
+                    new Message<TKey, TValue> { Key = kvp.Key, Value = kvp.Value },
+                    x => offsetTarget?.Post(new[] { x.TopicPartitionOffset })));
 
             return new CustomTarget<KeyValuePair<TKey, TValue>>(
                 processor,
                 ContinueWithFlush(producer, processor.Completion));
+        }
+
+        public IReceivableSourceBlock<IReadOnlyList<TopicPartitionOffset>> GetOffsetSource()
+        {
+            var buffer = new BufferBlock<IReadOnlyList<TopicPartitionOffset>>();
+            this.offsetTarget = buffer;
+            this.completionSource.Task.ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                {
+                    this.offsetTarget.Fault(t.Exception!);
+                }
+                else
+                {
+                    this.offsetTarget.Complete();
+                }
+            }, TaskScheduler.Default);
+
+            return buffer;
         }
 
         public ITargetBlock<IEnumerable<KeyValuePair<TKey, TValue>>> GetBatchTarget<TKey, TValue>(
@@ -31,15 +51,21 @@
             TopicPartition topicPartition,
             BatchedProduceOptions? options)
         {
-            return this.GetBatchTarget(
+            return this.GetBatchTarget<TKey, TValue, KeyValuePair<TKey, TValue>>(
                 producer,
-                (IEnumerable<KeyValuePair<TKey, TValue>> messages) =>
+                async (messages, offsets) =>
                 {
+                    var tasks = new List<Task<DeliveryResult<TKey, TValue>>>();
+
                     foreach (var kvp in messages)
                     {
-                        producer.Produce(
-                            topicPartition,
-                            new Message<TKey, TValue> { Key = kvp.Key, Value = kvp.Value });
+                        var message = new Message<TKey, TValue> { Key = kvp.Key, Value = kvp.Value };
+                        tasks.Add(producer.ProduceAsync(topicPartition, message));
+                    }
+
+                    foreach (var result in await Task.WhenAll(tasks))
+                    {
+                        offsets.Add(result.TopicPartitionOffset);
                     }
                 },
                 options);
@@ -50,19 +76,22 @@
             IConsumerGroupMetadata consumerGroup,
             BatchedProduceOptions? options)
         {
-            return this.GetBatchTarget(
+            return this.GetBatchTarget<TKey, TValue, TopicPartitionOffset>(
                 producer,
-                (IEnumerable<TopicPartitionOffset> offsets) =>
+                async (inOffsets, outOffsets) =>
                 {
-                    // Track the latest offset per partition.
-                    // (Client seems to unable to handle a large number of offsets).
                     var commitOffsets = new Dictionary<TopicPartition, TopicPartitionOffset>();
-                    foreach (var offset in offsets)
+                    foreach (var offset in inOffsets)
                     {
+                        outOffsets.Add(offset);
+
+                        // Track the latest offset per partition.
+                        // (Client seems to unable to handle a large number of offsets).
                         commitOffsets[offset.TopicPartition] = 
                             new TopicPartitionOffset(offset.TopicPartition, offset.Offset + 1);
                     }
 
+                    await Task.Yield();
                     producer.SendOffsetsToTransaction(commitOffsets.Values, consumerGroup, Timeout.InfiniteTimeSpan);
                 },
                 options);
@@ -70,7 +99,7 @@
 
         ITargetBlock<IEnumerable<TItem>> GetBatchTarget<TKey, TValue, TItem>(
             IProducer<TKey, TValue> producer,
-            Action<IEnumerable<TItem>> batchHandler,
+            Func<IEnumerable<TItem>, ICollection<TopicPartitionOffset>, Task> batchHandler,
             BatchedProduceOptions? options)
         {
             options ??= new BatchedProduceOptions();
@@ -80,21 +109,13 @@
                 BoundedCapacity = options.BoundedCapacity ?? DataflowBlockOptions.Unbounded,
             });
 
-            if (this.batchHandler == null)
+            if (this.batchHandlers.Count == 0)
             {
                 this.StartTransactions(producer, buffer, options.TransactionInterval);
             }
 
-            // Chain the handlers to coordinate multiple targets for the client.
-            // (All targets should produce the same number of batches.)
-            var prevHandler = this.batchHandler;
-            this.batchHandler = async batchCount =>
+            batchHandlers.Add(async (batchCount, offsets) =>
             {
-                if (prevHandler != null)
-                {
-                    await prevHandler(batchCount);
-                }
-
                 var items = new List<TItem>();
                 for (var i = 0; i < batchCount; i++)
                 {
@@ -106,8 +127,8 @@
                     items.AddRange(batch);
                 }
 
-                batchHandler(items);
-            };
+                await batchHandler(items, offsets);
+            });
 
             return new CustomTarget<IEnumerable<TItem>>(
                 buffer,
@@ -137,15 +158,23 @@
                     // Run one more time after completion.
                     completed = buffer.Completion.IsCompleted;
                     var nextTransactionTime = DateTime.Now + interval;
+                    var batches = buffer.Count;
 
-                    if (buffer.Count > 0 && this.batchHandler != null)
+                    if (batches > 0 && this.batchHandlers.Count > 0)
                     {
+                        var offsets = new List<TopicPartitionOffset>();
+
                         producer.BeginTransaction();
 
-                        // There may be multiple parallel batch handlers here.
-                        // Just tell them how many batches to read.
-                        await this.batchHandler(buffer.Count);
+                        foreach (var handler in this.batchHandlers)
+                        {
+                            // Tell the handler how many batches to read.
+                            // (All targets should produce the same number of batches.)
+                            await handler(batches, offsets);
+                        }
+
                         producer.CommitTransaction(Timeout.InfiniteTimeSpan);
+                        this.offsetTarget?.Post(offsets);
                     }
 
                     var delay = nextTransactionTime - DateTime.Now;

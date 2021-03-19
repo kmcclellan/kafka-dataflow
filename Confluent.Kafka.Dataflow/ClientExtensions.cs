@@ -38,7 +38,28 @@
                 throw new ArgumentNullException(nameof(topicPartition));
             }
 
-            return ProducerBlockFactory.GetTarget(producer, topicPartition);
+            return producerFactories.GetOrAdd(producer).GetTarget(producer, topicPartition);
+        }
+
+        /// <summary>
+        /// Represents a producer as a source block for delivered Kafka offsets.
+        /// </summary>
+        /// <remarks>
+        /// For transactional producers, messages include all produced and committed offsets in a transaction.
+        /// </remarks>
+        /// <typeparam name="TKey">The producer key type.</typeparam>
+        /// <typeparam name="TValue">The producer value type.</typeparam>
+        /// <param name="producer">The producer.</param>
+        /// <returns>The offset source block.</returns>
+        public static IReceivableSourceBlock<IReadOnlyList<TopicPartitionOffset>> AsOffsetSource<TKey, TValue>(
+            this IProducer<TKey, TValue> producer)
+        {
+            if (producer == null)
+            {
+                throw new ArgumentNullException(nameof(producer));
+            }
+
+            return producerFactories.GetOrAdd(producer).GetOffsetSource();
         }
 
         /// <summary>
