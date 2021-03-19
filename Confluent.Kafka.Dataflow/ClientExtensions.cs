@@ -2,7 +2,6 @@
 {
     using System;
     using System.Collections.Generic;
-    using System.Threading.Tasks;
     using System.Threading.Tasks.Dataflow;
     using Confluent.Kafka.Dataflow.Internal;
 
@@ -11,6 +10,9 @@
     /// </summary>
     public static class ClientExtensions
     {
+        readonly static ClientCache<ProducerBlockFactory> producerFactories = new();
+        readonly static ClientCache<ConsumerBlockFactory> consumerFactories = new();
+
         /// <summary>
         /// Represents a producer as a target block for Kafka key/value pairs.
         /// </summary>
@@ -26,7 +28,17 @@
             this IProducer<TKey, TValue> producer,
             TopicPartition topicPartition)
         {
-            return GetBlock(producer, f => f.GetTarget(topicPartition));
+            if (producer == null)
+            {
+                throw new ArgumentNullException(nameof(producer));
+            }
+
+            if (topicPartition == null)
+            {
+                throw new ArgumentNullException(nameof(topicPartition));
+            }
+
+            return ProducerBlockFactory.GetTarget(producer, topicPartition);
         }
 
         /// <summary>
@@ -49,7 +61,17 @@
             TopicPartition topicPartition,
             BatchedProduceOptions? options = null)
         {
-            return GetBlock(producer, f => f.GetBatchTarget(topicPartition, options));
+            if (producer == null)
+            {
+                throw new ArgumentNullException(nameof(producer));
+            }
+
+            if (topicPartition == null)
+            {
+                throw new ArgumentNullException(nameof(topicPartition));
+            }
+
+            return producerFactories.GetOrAdd(producer).GetBatchTarget(producer, topicPartition, options);
         }
 
         /// <summary>
@@ -72,7 +94,17 @@
             IConsumerGroupMetadata consumerGroup,
             BatchedProduceOptions? options = null)
         {
-            return GetBlock(producer, f => f.GetOffsetTarget(consumerGroup, options));
+            if (producer == null)
+            {
+                throw new ArgumentNullException(nameof(producer));
+            }
+
+            if (consumerGroup == null)
+            {
+                throw new ArgumentNullException(nameof(consumerGroup));
+            }
+
+            return producerFactories.GetOrAdd(producer).GetOffsetTarget(producer, consumerGroup, options);
         }
 
         /// <summary>
@@ -91,7 +123,12 @@
         public static ISourceBlock<KeyValuePair<TKey, TValue>> AsSource<TKey, TValue>(
             this IConsumer<TKey, TValue> consumer)
         {
-            return GetBlock(consumer, f => f.GetSource());
+            if (consumer == null)
+            {
+                throw new ArgumentNullException(nameof(consumer));
+            }
+
+            return consumerFactories.GetOrAdd(consumer).GetSource(consumer);
         }
 
         /// <summary>
@@ -107,7 +144,12 @@
         public static ISourceBlock<TopicPartitionOffset> AsOffsetSource<TKey, TValue>(
             this IConsumer<TKey, TValue> consumer)
         {
-            return GetBlock(consumer, f => f.GetOffsetSource());
+            if (consumer == null)
+            {
+                throw new ArgumentNullException(nameof(consumer));
+            }
+
+            return consumerFactories.GetOrAdd(consumer).GetOffsetSource();
         }
 
         /// <summary>
@@ -120,44 +162,12 @@
         public static ITargetBlock<TopicPartitionOffset> AsOffsetTarget<TKey, TValue>(
             this IConsumer<TKey, TValue> consumer)
         {
-            return GetBlock(consumer, f => f.GetOffsetTarget());
-        }
-
-        private static TBlock GetBlock<TKey, TValue, TBlock>(
-            IProducer<TKey, TValue> producer,
-            Func<ProducerBlockFactory<TKey, TValue>, TBlock> factory)
-        {
-            return GetBlock(
-                producer,
-                (IProducer<TKey, TValue> c, ClientState<Func<int, Task>> s) =>
-                    new ProducerBlockFactory<TKey, TValue>(c, s),
-                factory);
-        }
-
-        private static TBlock GetBlock<TKey, TValue, TBlock>(
-            IConsumer<TKey, TValue> consumer,
-            Func<ConsumerBlockFactory<TKey, TValue>, TBlock> factory)
-        {
-            return GetBlock(
-                consumer,
-                (IConsumer<TKey, TValue> c, ClientState<ITargetBlock<TopicPartitionOffset>> s) =>
-                    new ConsumerBlockFactory<TKey, TValue>(c, s),
-                factory);
-        }
-
-        private static TBlock GetBlock<TClient, TState, TFactory, TBlock>(
-            TClient client,
-            Func<TClient, ClientState<TState>, TFactory> getFactory,
-            Func<TFactory, TBlock> getBlock)
-            where TClient : IClient
-        {
-            var clientState = ClientState<TState>.Get(client);
-
-            // Client state is stored statically, so make sure this is thread-safe.
-            lock (clientState)
+            if (consumer == null)
             {
-                return getBlock(getFactory(client, clientState));
+                throw new ArgumentNullException(nameof(consumer));
             }
+
+            return ConsumerBlockFactory.GetOffsetTarget(consumer);
         }
     }
 }

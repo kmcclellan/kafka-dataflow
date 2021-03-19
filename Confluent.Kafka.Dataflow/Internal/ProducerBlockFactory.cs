@@ -6,42 +6,38 @@
     using System.Threading.Tasks;
     using System.Threading.Tasks.Dataflow;
 
-    class ProducerBlockFactory<TKey, TValue>
+    class ProducerBlockFactory
     {
-        private readonly IProducer<TKey, TValue> producer;
-        private readonly ClientState<Func<int, Task>> clientState;
+        readonly TaskCompletionSource<byte> completionSource = new();
+        Func<int, Task>? batchHandler;
 
-        public ProducerBlockFactory(
+        public static ITargetBlock<KeyValuePair<TKey, TValue>> GetTarget<TKey, TValue>(
             IProducer<TKey, TValue> producer,
-            ClientState<Func<int, Task>> clientState)
-        {
-            this.producer = producer;
-            this.clientState = clientState;
-        }
-
-        public ITargetBlock<KeyValuePair<TKey, TValue>> GetTarget(TopicPartition topicPartition)
+            TopicPartition topicPartition)
         {
             // No delivery handler support at this time. (Implement as a separate source block.)
             var processor = new ActionBlock<KeyValuePair<TKey, TValue>>(
-                kvp => this.producer.Produce(
+                kvp => producer.Produce(
                     topicPartition,
                     new Message<TKey, TValue> { Key = kvp.Key, Value = kvp.Value }));
 
             return new CustomTarget<KeyValuePair<TKey, TValue>>(
                 processor,
-                this.ContinueWithFlush(processor.Completion));
+                ContinueWithFlush(producer, processor.Completion));
         }
 
-        public ITargetBlock<IEnumerable<KeyValuePair<TKey, TValue>>> GetBatchTarget(
+        public ITargetBlock<IEnumerable<KeyValuePair<TKey, TValue>>> GetBatchTarget<TKey, TValue>(
+            IProducer<TKey, TValue> producer,
             TopicPartition topicPartition,
             BatchedProduceOptions? options)
         {
-            return this.GetBatchTarget<KeyValuePair<TKey, TValue>>(
-                messages =>
+            return this.GetBatchTarget(
+                producer,
+                (IEnumerable<KeyValuePair<TKey, TValue>> messages) =>
                 {
                     foreach (var kvp in messages)
                     {
-                        this.producer.Produce(
+                        producer.Produce(
                             topicPartition,
                             new Message<TKey, TValue> { Key = kvp.Key, Value = kvp.Value });
                     }
@@ -49,12 +45,14 @@
                 options);
         }
 
-        public ITargetBlock<IEnumerable<TopicPartitionOffset>> GetOffsetTarget(
+        public ITargetBlock<IEnumerable<TopicPartitionOffset>> GetOffsetTarget<TKey, TValue>(
+            IProducer<TKey, TValue> producer,
             IConsumerGroupMetadata consumerGroup,
             BatchedProduceOptions? options)
         {
-            return this.GetBatchTarget<TopicPartitionOffset>(
-                offsets =>
+            return this.GetBatchTarget(
+                producer,
+                (IEnumerable<TopicPartitionOffset> offsets) =>
                 {
                     // Track the latest offset per partition.
                     // (Client seems to unable to handle a large number of offsets).
@@ -65,38 +63,39 @@
                             new TopicPartitionOffset(offset.TopicPartition, offset.Offset + 1);
                     }
 
-                    this.producer.SendOffsetsToTransaction(commitOffsets.Values, consumerGroup, Timeout.InfiniteTimeSpan);
+                    producer.SendOffsetsToTransaction(commitOffsets.Values, consumerGroup, Timeout.InfiniteTimeSpan);
                 },
                 options);
         }
 
-        private ITargetBlock<IEnumerable<T>> GetBatchTarget<T>(
-            Action<IEnumerable<T>> batchHandler,
+        ITargetBlock<IEnumerable<TItem>> GetBatchTarget<TKey, TValue, TItem>(
+            IProducer<TKey, TValue> producer,
+            Action<IEnumerable<TItem>> batchHandler,
             BatchedProduceOptions? options)
         {
             options ??= new BatchedProduceOptions();
 
-            var buffer = new BufferBlock<IEnumerable<T>>(new DataflowBlockOptions
+            var buffer = new BufferBlock<IEnumerable<TItem>>(new DataflowBlockOptions
             {
                 BoundedCapacity = options.BoundedCapacity ?? DataflowBlockOptions.Unbounded,
             });
 
-            if (this.clientState.State == null)
+            if (this.batchHandler == null)
             {
                 this.StartTransactions(producer, buffer, options.TransactionInterval);
             }
 
             // Chain the handlers to coordinate multiple targets for the client.
             // (All targets should produce the same number of batches.)
-            var prevHandler = this.clientState.State;
-            this.clientState.State = async batchCount =>
+            var prevHandler = this.batchHandler;
+            this.batchHandler = async batchCount =>
             {
                 if (prevHandler != null)
                 {
                     await prevHandler(batchCount);
                 }
 
-                var items = new List<T>();
+                var items = new List<TItem>();
                 for (var i = 0; i < batchCount; i++)
                 {
                     if (!buffer.TryReceive(out var batch))
@@ -110,21 +109,21 @@
                 batchHandler(items);
             };
 
-            return new CustomTarget<IEnumerable<T>>(
+            return new CustomTarget<IEnumerable<TItem>>(
                 buffer,
-                this.clientState.CompletionSource.Task);
+                this.completionSource.Task);
         }
 
-        async Task ContinueWithFlush(Task completion)
+        static async Task ContinueWithFlush<TKey, TValue>(IProducer<TKey, TValue> producer, Task completion)
         {
             await completion;
-            this.producer.Flush(Timeout.InfiniteTimeSpan);
+            producer.Flush(Timeout.InfiniteTimeSpan);
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Dataflow fault")]
-        private async void StartTransactions<T>(
+        async void StartTransactions<TKey, TValue, TItem>(
             IProducer<TKey, TValue> producer,
-            BufferBlock<T> buffer,
+            BufferBlock<IEnumerable<TItem>> buffer,
             TimeSpan interval)
         {
             try
@@ -139,14 +138,14 @@
                     completed = buffer.Completion.IsCompleted;
                     var nextTransactionTime = DateTime.Now + interval;
 
-                    if (buffer.Count > 0 && this.clientState.State != null)
+                    if (buffer.Count > 0 && this.batchHandler != null)
                     {
                         producer.BeginTransaction();
 
                         // There may be multiple parallel batch handlers here.
                         // Just tell them how many batches to read.
-                        await this.clientState.State(buffer.Count);
-                        this.producer.CommitTransaction(Timeout.InfiniteTimeSpan);
+                        await this.batchHandler(buffer.Count);
+                        producer.CommitTransaction(Timeout.InfiniteTimeSpan);
                     }
 
                     var delay = nextTransactionTime - DateTime.Now;
@@ -162,10 +161,10 @@
             }
             catch (Exception exception)
             {
-                this.clientState.CompletionSource.TrySetException(exception);
+                this.completionSource.TrySetException(exception);
             }
 
-            this.clientState.CompletionSource.TrySetResult(default);
+            this.completionSource.TrySetResult(default);
         }
     }
 }
