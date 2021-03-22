@@ -162,7 +162,7 @@
         /// <typeparam name="TValue">The consumer value type.</typeparam>
         /// <param name="consumer">The consumer.</param>
         /// <returns>The offset source block.</returns>
-        public static ISourceBlock<TopicPartitionOffset> AsOffsetSource<TKey, TValue>(
+        public static IReceivableSourceBlock<TopicPartitionOffset> AsOffsetSource<TKey, TValue>(
             this IConsumer<TKey, TValue> consumer)
         {
             if (consumer == null)

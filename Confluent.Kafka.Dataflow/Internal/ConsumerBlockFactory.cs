@@ -25,7 +25,7 @@
                 () => this.StartConsuming(consumer, buffer));
         }
 
-        public ISourceBlock<TopicPartitionOffset> GetOffsetSource()
+        public IReceivableSourceBlock<TopicPartitionOffset> GetOffsetSource()
         {
             var buffer = new BufferBlock<TopicPartitionOffset>();
             this.offsetTarget = buffer;

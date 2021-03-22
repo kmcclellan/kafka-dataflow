@@ -1,16 +1,18 @@
 ﻿namespace Confluent.Kafka.Dataflow.Internal
 {
     using System;
+    using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.Threading.Tasks;
     using System.Threading.Tasks.Dataflow;
 
-    class CustomSource<T> : ISourceBlock<T>
+    class CustomSource<T> : IReceivableSourceBlock<T>
     {
-        private readonly ISourceBlock<T> source;
+        private readonly IReceivableSourceBlock<T> source;
         private readonly TaskCompletionSource<byte> completionSource;
         private readonly Action? start;
 
-        public CustomSource(ISourceBlock<T> source, TaskCompletionSource<byte> completionSource, Action? start = null)
+        public CustomSource(IReceivableSourceBlock<T> source, TaskCompletionSource<byte> completionSource, Action? start = null)
         {
             this.source = source;
             this.completionSource = completionSource;
@@ -18,6 +20,11 @@
         }
 
         public Task Completion => this.source.Completion;
+
+        public bool TryReceive(Predicate<T>? filter, [MaybeNullWhen(false)] out T item) =>
+            this.source.TryReceive(filter, out item);
+
+        public bool TryReceiveAll([NotNullWhen(true)] out IList<T>? items) => this.source.TryReceiveAll(out items);
 
         public IDisposable LinkTo(ITargetBlock<T> target, DataflowLinkOptions linkOptions)
         {
