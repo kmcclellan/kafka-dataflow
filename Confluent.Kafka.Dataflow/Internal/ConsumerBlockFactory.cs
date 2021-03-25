@@ -120,12 +120,26 @@
                 var result = this.consumer.Consume(cancellationToken);
                 var kvp = new KeyValuePair<TKey, TValue>(result.Message.Key, result.Message.Value);
 
-                if (!this.buffer.Post(kvp) && !await this.buffer.SendAsync(kvp, cancellationToken))
+                if (!this.buffer.Post(kvp))
                 {
-                    await this.buffer.Completion;
+                    // Match librdkafka default.
+                    const int HEARTBEAT_INTERVAL = 3000;
 
-                    // Buffer rejected message (don't send offset).
-                    throw new OperationCanceledException();
+                    var task = this.buffer.SendAsync(kvp, cancellationToken);
+                    while (await Task.WhenAny(task, Task.Delay(HEARTBEAT_INTERVAL, cancellationToken)) != task)
+                    {
+                        // Reconsume to stay in consumer group.
+                        this.consumer.Seek(result.TopicPartitionOffset);
+                        this.consumer.Consume(cancellationToken);
+                    }
+
+                    if (!task.Result)
+                    {
+                        await this.buffer.Completion;
+
+                        // Buffer rejected message (don't send offset).
+                        throw new OperationCanceledException();
+                    }
                 }
 
                 return result.TopicPartitionOffset;
