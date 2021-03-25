@@ -2,34 +2,43 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Threading;
     using System.Threading.Tasks;
     using System.Threading.Tasks.Dataflow;
 
     class ConsumerBlockFactory
     {
-        readonly TaskCompletionSource<byte> completionSource = new();
-        ITargetBlock<TopicPartitionOffset>? offsetTarget;
+        readonly Lazy<Task> consumingTask;
 
-        public ISourceBlock<KeyValuePair<TKey, TValue>> GetSource<TKey, TValue>(IConsumer<TKey, TValue> consumer)
+        IBlockConsumer? consumer;
+        BufferBlock<TopicPartitionOffset>? consumedOffsets;
+
+        public ConsumerBlockFactory()
         {
-            var buffer = new BufferBlock<KeyValuePair<TKey, TValue>>(new DataflowBlockOptions
-            {
-                // Consumers do their own buffering.
-                // We just want a block to hold the current message.
-                BoundedCapacity = 1,
-            });
+            this.consumingTask = new Lazy<Task>(this.ConsumeLoop, LazyThreadSafetyMode.ExecutionAndPublication);
+        }
 
-            return new CustomSource<KeyValuePair<TKey, TValue>>(
-                buffer,
-                this.completionSource,
-                () => this.StartConsuming(consumer, buffer));
+        public IReceivableSourceBlock<KeyValuePair<TKey, TValue>> GetSource<TKey, TValue>(IConsumer<TKey, TValue> consumer)
+        {
+            if (this.consumingTask.IsValueCreated || this.consumer != null)
+            {
+                throw new InvalidOperationException("Consumer is already in use.");
+            }
+
+            var buffer = new BlockConsumer<TKey, TValue>(consumer);
+            this.consumer = buffer;
+            return buffer.Source.BeginWith(this.consumingTask);
         }
 
         public IReceivableSourceBlock<TopicPartitionOffset> GetOffsetSource()
         {
-            var buffer = new BufferBlock<TopicPartitionOffset>();
-            this.offsetTarget = buffer;
-            return new CustomSource<TopicPartitionOffset>(buffer, this.completionSource);
+            if (this.consumingTask.IsValueCreated)
+            {
+                throw new InvalidOperationException("Consumer is already in use.");
+            }
+
+            this.consumedOffsets ??= new();
+            return this.consumedOffsets;
         }
 
         public static ITargetBlock<TopicPartitionOffset> GetOffsetTarget<TKey, TValue>(IConsumer<TKey, TValue> consumer)
@@ -37,53 +46,90 @@
             var processor = new ActionBlock<TopicPartitionOffset>(
                 x => consumer.StoreOffset(new TopicPartitionOffset(x.TopicPartition, x.Offset + 1)));
 
-            return new CustomTarget<TopicPartitionOffset>(
-                processor,
-                ContinueWithCommit(consumer, processor.Completion));
+            return processor.ContinueWith(
+                new Lazy<Task>(async () =>
+                {
+                    await Task.Yield();
+                    consumer.Commit();
+                }));
         }
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Dataflow fault")]
-        async void StartConsuming<TKey, TValue>(
-            IConsumer<TKey, TValue> consumer,
-            ITargetBlock<KeyValuePair<TKey, TValue>> target)
+        async Task ConsumeLoop()
         {
             try
             {
-                // Continue on thread pool.
-                await Task.Yield();
-                while (!this.completionSource.Task.IsCompleted)
+                if (this.consumer == null)
                 {
-                    var result = consumer.Consume(100);
-                    if (result != null)
-                    {
-                        var kvp = new KeyValuePair<TKey, TValue>(result.Message.Key, result.Message.Value);
-                        if (!target.Post(kvp))
-                        {
-                            await target.SendAsync(kvp);
-                        }
+                    throw new InvalidOperationException("No message source.");
+                }
 
-                        // Target should never postpone (unbounded).
-                        this.offsetTarget?.Post(result.TopicPartitionOffset);
+                using var cancellation = this.consumer.Buffer.GetCompletionToken();
+                while (!cancellation.IsCancellationRequested)
+                {
+                    try
+                    {
+                        var offset = await this.consumer.Consume(cancellation.Token);
+                        this.consumedOffsets?.Post(offset);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Caller did not request cancellation, so swallow this.
                     }
                 }
 
-                // Observe any exceptions.
-                await this.completionSource.Task;
+                this.consumedOffsets?.Complete();
             }
             catch (Exception exception)
             {
-                target.Fault(exception);
-                this.offsetTarget?.Fault(exception);
+                (this.consumedOffsets as IDataflowBlock)?.Fault(exception);
+                throw;
             }
-
-            target.Complete();
-            this.offsetTarget?.Complete();
         }
 
-        static async Task ContinueWithCommit<TKey, TValue>(IConsumer<TKey, TValue> consumer, Task completion)
+        interface IBlockConsumer
         {
-            await completion;
-            consumer.Commit();
+            IDataflowBlock Buffer { get; }
+
+            Task<TopicPartitionOffset> Consume(CancellationToken cancellationToken);
+        }
+
+        class BlockConsumer<TKey, TValue> : IBlockConsumer
+        {
+            static readonly DataflowBlockOptions BufferOptions = new()
+            {
+                // Consumers do their own buffering.
+                // We just want a block to hold the current message.
+                BoundedCapacity = 1,
+            };
+
+            readonly IConsumer<TKey, TValue> consumer;
+            readonly BufferBlock<KeyValuePair<TKey, TValue>> buffer = new(BufferOptions);
+
+            public BlockConsumer(IConsumer<TKey, TValue> consumer)
+            {
+                this.consumer = consumer;
+            }
+
+            public IDataflowBlock Buffer => this.buffer;
+
+            public IReceivableSourceBlock<KeyValuePair<TKey, TValue>> Source => this.buffer;
+
+            public async Task<TopicPartitionOffset> Consume(CancellationToken cancellationToken)
+            {
+                await Task.Yield();
+                var result = this.consumer.Consume(cancellationToken);
+                var kvp = new KeyValuePair<TKey, TValue>(result.Message.Key, result.Message.Value);
+
+                if (!this.buffer.Post(kvp) && !await this.buffer.SendAsync(kvp, cancellationToken))
+                {
+                    await this.buffer.Completion;
+
+                    // Buffer rejected message (don't send offset).
+                    throw new OperationCanceledException();
+                }
+
+                return result.TopicPartitionOffset;
+            }
         }
     }
 }
