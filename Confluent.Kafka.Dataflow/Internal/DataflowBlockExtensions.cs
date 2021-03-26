@@ -24,10 +24,13 @@
         }
 
         public static IReceivableSourceBlock<T> BeginWith<T>(this IReceivableSourceBlock<T> source, Lazy<Task> action) =>
-            new LazySource<T>(GetTrigger(source, action));
+            new LazySource<T>(GetTrigger(source, action)).ContinueWith(action);
 
         public static ITargetBlock<T> BeginWith<T>(this ITargetBlock<T> target, Lazy<Task> action) =>
             new LazyTarget<T>(GetTrigger(target, action)).ContinueWith(action);
+
+        public static IReceivableSourceBlock<T> ContinueWith<T>(this IReceivableSourceBlock<T> source, Lazy<Task> action) =>
+            new ExtendedSource<T>(source, ContinueWithAsync(source.Completion, action));
 
         public static ITargetBlock<T> ContinueWith<T>(this ITargetBlock<T> target, Lazy<Task> action) =>
             new ExtendedTarget<T>(target, ContinueWithAsync(target.Completion, action));
@@ -151,6 +154,41 @@
             public void Complete() => this.Value.Complete();
 
             public void Fault(Exception exception) => this.Value.Fault(exception);
+        }
+
+        class ExtendedSource<T> : IReceivableSourceBlock<T>
+        {
+            private readonly IReceivableSourceBlock<T> source;
+
+            public ExtendedSource(IReceivableSourceBlock<T> source, Task completion)
+            {
+                this.source = source;
+                this.Completion = completion;
+            }
+
+            public Task Completion { get; }
+
+            public bool TryReceive(Predicate<T>? filter, [MaybeNullWhen(false)] out T item) =>
+                this.source.TryReceive(out item);
+
+            public bool TryReceiveAll([NotNullWhen(true)] out IList<T>? items) =>
+                this.source.TryReceiveAll(out items);
+
+            public IDisposable LinkTo(ITargetBlock<T> target, DataflowLinkOptions linkOptions) =>
+                this.source.LinkTo(target, linkOptions);
+
+            public T? ConsumeMessage(DataflowMessageHeader messageHeader, ITargetBlock<T> target, out bool messageConsumed) =>
+                this.source.ConsumeMessage(messageHeader, target, out messageConsumed);
+
+            public bool ReserveMessage(DataflowMessageHeader messageHeader, ITargetBlock<T> target) =>
+                this.source.ReserveMessage(messageHeader, target);
+
+            public void ReleaseReservation(DataflowMessageHeader messageHeader, ITargetBlock<T> target) =>
+                this.source.ReleaseReservation(messageHeader, target);
+
+            public void Complete() => this.source.Complete();
+
+            public void Fault(Exception exception) => this.source.Fault(exception);
         }
 
         class ExtendedTarget<T> : ITargetBlock<T>
