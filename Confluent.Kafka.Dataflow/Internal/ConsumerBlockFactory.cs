@@ -128,9 +128,13 @@
                     var task = this.buffer.SendAsync(kvp, cancellationToken);
                     while (await Task.WhenAny(task, Task.Delay(HEARTBEAT_INTERVAL, cancellationToken)) != task)
                     {
-                        // Reconsume to stay in consumer group.
-                        this.consumer.Seek(result.TopicPartitionOffset);
-                        this.consumer.Consume(cancellationToken);
+                        // Poll for message to stay in consumer group.
+                        var next = this.consumer.Consume(TimeSpan.Zero);
+                        if (next != null)
+                        {
+                            // Go back to where we were.
+                            this.consumer.Seek(next.TopicPartitionOffset);
+                        }
                     }
 
                     if (!task.Result)
