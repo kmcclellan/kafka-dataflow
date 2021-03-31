@@ -35,29 +35,12 @@
         public static ITargetBlock<T> ContinueWith<T>(this ITargetBlock<T> target, Lazy<Task> action) =>
             new ExtendedTarget<T>(target, ContinueWithAsync(target.Completion, action));
 
-        static Func<T> GetTrigger<T>(T block, Lazy<Task> action)
-            where T : IDataflowBlock
+        static Func<T> GetTrigger<T>(T obj, Lazy<Task> action)
         {
             return () =>
             {
-                action.Value.ContinueWith(
-                    (t, obj) =>
-                    {
-                        if (t.IsFaulted)
-                        {
-                            ((IDataflowBlock)obj).Fault(t.Exception);
-                        }
-                        else
-                        {
-                            ((IDataflowBlock)obj).Complete();
-                        }
-                    },
-                    block,
-                    default,
-                    TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
-
-                return block;
+                _ = action.Value;
+                return obj;
             };
         }
 
@@ -69,8 +52,7 @@
 
         class LazySource<T> : LazyBlock<IReceivableSourceBlock<T>>, IReceivableSourceBlock<T>
         {
-            public LazySource(Func<IReceivableSourceBlock<T>> factory)
-                : base(factory)
+            public LazySource(Func<IReceivableSourceBlock<T>> factory) : base(factory)
             {
             }
 
@@ -95,8 +77,7 @@
 
         class LazyTarget<T> : LazyBlock<ITargetBlock<T>>, ITargetBlock<T>
         {
-            public LazyTarget(Func<ITargetBlock<T>> factory)
-                : base(factory)
+            public LazyTarget(Func<ITargetBlock<T>> factory) : base(factory)
             {
             }
 
@@ -114,7 +95,7 @@
             where T : IDataflowBlock
         {
             readonly Func<T> factory;
-            private readonly TaskCompletionSource<byte> completionSource = new();
+            readonly TaskCompletionSource<byte> completionSource = new();
             T? value;
 
             public LazyBlock(Func<T> factory)
@@ -130,13 +111,13 @@
                 {
                     if (this.value == null)
                     {
-                        this.value = factory();
+                        this.value = this.factory();
                         this.value.Completion.ContinueWith(
-                            (t, obj) =>
+                            (task, obj) =>
                             {
-                                if (t.IsFaulted)
+                                if (task.IsFaulted)
                                 {
-                                    ((TaskCompletionSource<byte>)obj).TrySetException(t.Exception);
+                                    ((TaskCompletionSource<byte>)obj).TrySetException(task.Exception);
                                 }
                                 else
                                 {
@@ -156,17 +137,15 @@
             public void Fault(Exception exception) => this.Value.Fault(exception);
         }
 
-        class ExtendedSource<T> : IReceivableSourceBlock<T>
+        class ExtendedSource<T> : ExtendedBlock, IReceivableSourceBlock<T>
         {
-            private readonly IReceivableSourceBlock<T> source;
+            readonly IReceivableSourceBlock<T> source;
 
             public ExtendedSource(IReceivableSourceBlock<T> source, Task completion)
+                : base(source, completion)
             {
                 this.source = source;
-                this.Completion = completion;
             }
-
-            public Task Completion { get; }
 
             public bool TryReceive(Predicate<T>? filter, [MaybeNullWhen(false)] out T item) =>
                 this.source.TryReceive(out item);
@@ -185,23 +164,17 @@
 
             public void ReleaseReservation(DataflowMessageHeader messageHeader, ITargetBlock<T> target) =>
                 this.source.ReleaseReservation(messageHeader, target);
-
-            public void Complete() => this.source.Complete();
-
-            public void Fault(Exception exception) => this.source.Fault(exception);
         }
 
-        class ExtendedTarget<T> : ITargetBlock<T>
+        class ExtendedTarget<T> : ExtendedBlock, ITargetBlock<T>
         {
-            private readonly ITargetBlock<T> target;
+            readonly ITargetBlock<T> target;
 
             public ExtendedTarget(ITargetBlock<T> target, Task completion)
+                : base(target, completion)
             {
                 this.target = target;
-                this.Completion = completion;
             }
-
-            public Task Completion { get; }
 
             public DataflowMessageStatus OfferMessage(
                 DataflowMessageHeader messageHeader,
@@ -211,10 +184,32 @@
             {
                 return this.target.OfferMessage(messageHeader, messageValue, source, consumeToAccept);
             }
+        }
 
-            public void Complete() => this.target.Complete();
+        class ExtendedBlock : IDataflowBlock
+        {
+            readonly IDataflowBlock block;
 
-            public void Fault(Exception exception) => this.target.Fault(exception);
+            public ExtendedBlock(IDataflowBlock block, Task completion)
+            {
+                this.block = block;
+
+                // Propagate faults upstream.
+                completion.ContinueWith(
+                    (task, obj) => ((IDataflowBlock)obj!).Fault(task.Exception!),
+                    block,
+                    default,
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
+
+                this.Completion = Task.WhenAll(block.Completion, completion);
+            }
+
+            public Task Completion { get; }
+
+            public void Complete() => this.block.Complete();
+
+            public void Fault(Exception exception) => this.block.Fault(exception);
         }
     }
 }
