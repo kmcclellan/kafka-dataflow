@@ -32,4 +32,9 @@
     <None Include="../icon.png" Pack="true" PackagePath="/"/>
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Confluent.Kafka" Version="*" />
+    <PackageReference Include="System.Threading.Tasks.Dataflow" Version="5.0.*" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
+  </ItemGroup>
+
 </Project>
