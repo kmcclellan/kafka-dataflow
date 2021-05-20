@@ -110,3 +110,38 @@ var processor = new TransformBlock<Tuple<TopicPartitionOffset, Message<string, s
 var offsetTarget = consumer.AsOffsetBlock();
 processor.LinkTo(offsetTarget, linkOptions);
 ```
+
+### Producing using `ITargetBlock<T>`
+
+Use `IProducer<TKey, TValue>.AsTargetBlock(...)` to direct a message pipeline into a destination Kafka topic:
+
+```c#
+using System.Threading.Tasks.Dataflow;
+using Confluent.Kafka;
+using Confluent.Kafka.Dataflow;
+
+using var producer = new ProducerBuilder<string, string>(
+    new ProducerConfig
+    {
+        BootstrapServers = "localhost:9092",
+    }).Build();
+
+var target = producer.AsTargetBlock(new TopicPartition("my-topic", Partition.Any));
+
+var generator = new TransformBlock<int, Message<string, string>>(
+    i => new Message<string, string>
+    {
+        Key = i.ToString(),
+        Value = $"Value #{i}"
+    });
+
+generator.LinkTo(target, new DataflowLinkOptions { PropagateCompletion = true });
+
+for (var i = 0; i < 10; i++)
+{
+    generator.Post(i);
+}
+
+generator.Complete();
+await target.Completion;
+```

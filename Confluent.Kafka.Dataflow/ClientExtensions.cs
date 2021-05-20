@@ -50,5 +50,28 @@
                 x => consumer.StoreOffset(new TopicPartitionOffset(x.TopicPartition, x.Offset + 1)),
                 options ?? new());
         }
+
+        /// <summary>
+        /// Represents a producer as a target block for Kafka messages.
+        /// </summary>
+        /// <remarks>
+        /// A producer can be represented as multiple targets.
+        /// </remarks>
+        /// <typeparam name="TKey">The producer key type.</typeparam>
+        /// <typeparam name="TValue">The producer value type.</typeparam>
+        /// <param name="producer">The producer.</param>
+        /// <param name="topicPartition">The topic/partition receiving the messages. Use <see cref="Partition.Any"/> for automatic partitioning.</param>
+        /// <param name="options">Block options for producing.</param>
+        /// <returns>The producer target block.</returns>
+        public static ITargetBlock<Message<TKey, TValue>> AsTargetBlock<TKey, TValue>(
+            this IProducer<TKey, TValue> producer,
+            TopicPartition topicPartition,
+            ProduceBlockOptions? options = null)
+        {
+            return new ProduceBlock<TKey, TValue>(
+                producer ?? throw new ArgumentNullException(nameof(producer)),
+                topicPartition ?? throw new ArgumentNullException(nameof(topicPartition)),
+                options ?? new ProduceBlockOptions());
+        }
     }
 }

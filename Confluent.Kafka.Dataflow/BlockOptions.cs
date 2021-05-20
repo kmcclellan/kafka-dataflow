@@ -1,5 +1,6 @@
 ﻿namespace Confluent.Kafka.Dataflow
 {
+    using System;
     using System.Threading.Tasks.Dataflow;
 
     /// <summary>
@@ -18,5 +19,16 @@
     /// </summary>
     public class OffsetBlockOptions : ExecutionDataflowBlockOptions
     {
+    }
+
+    /// <summary>
+    /// Dataflow block options for producing to Kafka.
+    /// </summary>
+    public class ProduceBlockOptions : ExecutionDataflowBlockOptions
+    {
+        /// <summary>
+        /// Gets or sets the handler for produced message offsets.
+        /// </summary>
+        public Action<TopicPartitionOffset>? OffsetHandler { get; set; }
     }
 }
