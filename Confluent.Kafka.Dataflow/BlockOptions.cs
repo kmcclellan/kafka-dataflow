@@ -12,4 +12,11 @@
         /// </summary>
         public ITargetBlock<TopicPartitionOffset>? OffsetTarget { get; set; }
     }
+
+    /// <summary>
+    /// Dataflow block options for handling processed Kafka offsets.
+    /// </summary>
+    public class OffsetBlockOptions : ExecutionDataflowBlockOptions
+    {
+    }
 }

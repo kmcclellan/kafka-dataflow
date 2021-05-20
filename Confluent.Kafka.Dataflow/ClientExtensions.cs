@@ -28,5 +28,27 @@
                 consumer ?? throw new ArgumentNullException(nameof(consumer)),
                 options ?? new());
         }
+
+        /// <summary>
+        /// Represents a consumer as a target block for processed Kafka offsets.
+        /// </summary>
+        /// <typeparam name="TKey">The consumer key type.</typeparam>
+        /// <typeparam name="TValue">The consumer value type.</typeparam>
+        /// <param name="consumer">The consumer.</param>
+        /// <param name="options">Block options for processing.</param>
+        /// <returns>The consumer offset block.</returns>
+        public static ITargetBlock<TopicPartitionOffset> AsOffsetBlock<TKey, TValue>(
+            this IConsumer<TKey, TValue> consumer,
+            OffsetBlockOptions? options = null)
+        {
+            if (consumer == null)
+            {
+                throw new ArgumentNullException(nameof(consumer));
+            }
+
+            return new ActionBlock<TopicPartitionOffset>(
+                x => consumer.StoreOffset(new TopicPartitionOffset(x.TopicPartition, x.Offset + 1)),
+                options ?? new());
+        }
     }
 }
