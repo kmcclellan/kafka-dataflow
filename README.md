@@ -76,7 +76,7 @@ joiner.LinkTo(processor, linkOptions);
 
 ### Committing offsets
 
-The Kafka client auto-commits periodically by default. Use `IConsumer<TKey, TValue>.AsOffsetBlock(...)` to control when offsets are stored/queued for the next commit.
+The Kafka client auto-commits periodically by default. If `enable.auto.offset.store` is configured to `false` (recommended), you can use `IConsumer<TKey, TValue>.AsOffsetBlock(...)` to control when offsets are stored/queued for the next commit.
 
 You can store offsets at the time their messages leave the source block ("consumed" by a target):
 
@@ -88,7 +88,7 @@ var source = consumer.AsSourceBlock(new ConsumerBlockOptions { OffsetTarget = of
 Or store them later on in the pipeline (after processing is finished):
 
 ```c#
-// Set up a join block for message/value pairs (see above).
+// Set up a join block for offset/message pairs (see above).
 // ...
 
 // Use a transform block to emit processed offsets.
@@ -109,6 +109,7 @@ var processor = new TransformBlock<Tuple<TopicPartitionOffset, Message<string, s
 // Link processor to offset target.
 var offsetTarget = consumer.AsOffsetBlock();
 processor.LinkTo(offsetTarget, linkOptions);
+joiner.LinkTo(processor, linkOptions);
 ```
 
 ### Producing using `ITargetBlock<T>`
