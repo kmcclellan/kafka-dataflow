@@ -1,4 +1,4 @@
-﻿namespace Confluent.Kafka.Dataflow.Internal
+namespace Confluent.Kafka.Dataflow.Internal
 {
     using System;
     using System.Collections.Concurrent;

@@ -1,4 +1,4 @@
-﻿namespace Confluent.Kafka.Dataflow
+namespace Confluent.Kafka.Dataflow
 {
     using System;
     using System.Threading.Tasks.Dataflow;
