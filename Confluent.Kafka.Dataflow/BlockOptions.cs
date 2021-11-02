@@ -6,6 +6,7 @@ namespace Confluent.Kafka.Dataflow
     /// <summary>
     /// Dataflow block options for consuming from Kafka.
     /// </summary>
+    [Obsolete("Use DataflowBlockOptions and/or additional options individually.")]
     public class ConsumeBlockOptions : DataflowBlockOptions
     {
         /// <summary>
@@ -17,6 +18,7 @@ namespace Confluent.Kafka.Dataflow
     /// <summary>
     /// Dataflow block options for handling processed Kafka offsets.
     /// </summary>
+    [Obsolete("Use DataflowBlockOptions and/or additional options individually.")]
     public class OffsetBlockOptions : ExecutionDataflowBlockOptions
     {
     }
@@ -24,6 +26,7 @@ namespace Confluent.Kafka.Dataflow
     /// <summary>
     /// Dataflow block options for producing to Kafka.
     /// </summary>
+    [Obsolete("Use DataflowBlockOptions and/or additional options individually.")]
     public class ProduceBlockOptions : ExecutionDataflowBlockOptions
     {
         /// <summary>

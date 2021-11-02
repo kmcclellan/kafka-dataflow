@@ -38,13 +38,14 @@ var processor = new ActionBlock<Message<string, string>>(
     message => Console.WriteLine($"Message received: {message.Timestamp}"));
 
 // Initialize source and link to target.
-var source = consumer.AsSourceBlock(new ConsumeBlockOptions
+var blockOptions = new DataflowBlockOptions
 {
     // It's a good idea to limit buffered messages (in case processing falls behind).
     // Otherwise, all messages are offered as soon as they are available.
     BoundedCapacity = 8,
-});
+};
 
+var source = consumer.AsSourceBlock(options: blockOptions);
 source.LinkTo(processor, new DataflowLinkOptions { PropagateCompletion = true });
 
 // Optionally, request to stop processing.
@@ -56,48 +57,21 @@ await processor.Completion;
 consumer.Close();
 ```
 
-### Mapping messages to offsets
+### Committing message offsets
 
-Sometimes we want to process messages alongside their corresponding offsets. This can be achieved using `JoinBlock<T1, T2>`:
+The Kafka client auto-commits periodically by default. It can automatically store/queue messages for the next commit as soon as they are loaded into memory.
 
-```c#
-// Define a target for offset/message pairs.
-var processor = new ActionBlock<Tuple<TopicPartitionOffset, Message<string, string>>>(
-    pair => Console.WriteLine($"Received message: {pair.Item1}"));
-
-// Set up a block to join offsets to messages
-var joiner = new JoinBlock<TopicPartitionOffset, Message<string, string>>();
-var source = consumer.AsSourceBlock(new ConsumeBlockOptions { OffsetTarget = joiner.Target1 });
-
-var linkOptions = new DataflowLinkOptions { PropagateCompletion = true };
-source.LinkTo(joiner.Target2, linkOptions);
-joiner.LinkTo(processor, linkOptions);
-```
-
-### Committing offsets
-
-The Kafka client auto-commits periodically by default. If `enable.auto.offset.store` is configured to `false` (recommended), you can use `IConsumer<TKey, TValue>.AsOffsetBlock(...)` to control when offsets are stored/queued for the next commit.
-
-You can store offsets at the time their messages leave the source block ("consumed" by a target):
+Alternatively, you can set `enable.auto.offset.store` to `false` and store offsets manually after processing is finished. This prevents unprocessed messages from being committed in exceptional scenarios.
 
 ```c#
-var offsetTarget = consumer.AsOffsetBlock();
-var source = consumer.AsSourceBlock(new ConsumerBlockOptions { OffsetTarget = offsetTarget });
-```
 
-Or store them later on in the pipeline (after processing is finished):
-
-```c#
-// Set up a join block for offset/message pairs (see above).
-// ...
-
-// Use a transform block to emit processed offsets.
-var processor = new TransformBlock<Tuple<TopicPartitionOffset, Message<string, string>>, TopicPartitionOffset>(
-    async pair =>
+// Use a transform block to emit processed messages.
+var processor = new TransformBlock<Message<string, string>, Message<string, string>>(
+    async message =>
     {
         // Process message asynchronously.
         // ...
-        return pair.Item1;
+        return message;
     },
     new ExecutionDataflowBlockOptions
     {
@@ -106,10 +80,12 @@ var processor = new TransformBlock<Tuple<TopicPartitionOffset, Message<string, s
         EnsureOrdered = true,
     });
 
-// Link processor to offset target.
-var offsetTarget = consumer.AsOffsetBlock();
-processor.LinkTo(offsetTarget, linkOptions);
-joiner.LinkTo(processor, linkOptions);
+// Link the processor to the source and commit target.
+var source = consumer.AsSourceBlock(out commitTarget, options: blockOptions);
+
+var linkOptions = new DataflowLinkOptions { PropagateCompletion = true };
+source.LinkTo(processor, linkOptions);
+processor.LinkTo(commitTarget, linkOptions);
 ```
 
 ### Producing using `ITargetBlock<T>`
