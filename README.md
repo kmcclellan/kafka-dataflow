@@ -4,6 +4,7 @@ An extension of [Confluent's Kafka client](https://github.com/confluentinc/confl
 ## Features
 * Represent consumers/producers as dataflow blocks.
 * Process Kafka messages using a dataflow pipeline.
+* Configure transactional producing and EoS stream processing.
 
 ## Installation
 
@@ -121,4 +122,50 @@ for (var i = 0; i < 10; i++)
 
 generator.Complete();
 await target.Completion;
+```
+
+### Transactions and stream processing using `TargetBuilder<T>`
+
+Kafka supports producing messages and committing offsets in transactions. A common use case is for "stream processing," so a processed message offset is committed atomically with the corresponding messages it produced ("exactly once semantics").
+
+Representing all data you want included within the same transaction as a custom data type, you can use `TargetBuilder<T>` to create a single composite target:
+
+```c#
+
+// Payment and shipping requests should be created transactionally.
+class OrderData
+{
+    public OrderData(PaymentRequest payment, ShippingRequest shipping)
+    {
+        this.Payment = payment;
+        this.Shipping = shipping;
+    }
+
+    public PaymentRequest Payment { get; }
+
+    public ShippingRequest Shipping { get; }
+}
+
+// Configure mappings to Kafka messages to be produced.
+var builder = new TargetBuilder<OrderData>()
+    .WithMessages(
+        myProducer,
+        order => new[] { new Message<Null, PaymentRequest> { Value = order.Payment } },
+        new TopicPartition("payment-requests", Partition.Any))
+    .WithMessages(
+        myProducer,
+        order => new[] { new Message<Null, ShippingRequest> { Value = order.Shipping } },
+        new TopicPartition("shipping-requests", Partition.Any));
+
+// Optionally, link a Kafka source to include the processed offset for each order.
+// Payment and shipping will be created if and only if the order is committed.
+builder.AsStream(myConsumer, out var orderSource)
+var orderProcessor = new TransformBlock<OrderRequest, OrderData>(this.ProcessOrder);
+orderSource.LinkTo(orderProcessor, LinkOptions);
+
+// Finish linking Kafka stream. 
+var orderTarget = builder.Build();
+orderProcessor.LinkTo(orderTarget, LinkOptions);
+
+await orderTarget.Completion;
 ```
