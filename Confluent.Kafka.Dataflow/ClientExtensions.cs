@@ -1,8 +1,10 @@
 namespace Confluent.Kafka.Dataflow
 {
     using System;
+    using System.Threading.Tasks;
     using System.Threading.Tasks.Dataflow;
-    using Confluent.Kafka.Dataflow.Internal;
+    using Confluent.Kafka.Dataflow.Blocks;
+    using Confluent.Kafka.Dataflow.Consuming;
 
     /// <summary>
     /// Extensions to represent Kafka producers and consumers as dataflow blocks.
@@ -24,9 +26,20 @@ namespace Confluent.Kafka.Dataflow
             this IConsumer<TKey, TValue> consumer,
             ConsumeBlockOptions? options = null)
         {
-            return new ConsumeBlock<TKey, TValue>(
-                consumer ?? throw new ArgumentNullException(nameof(consumer)),
-                options ?? new());
+            var loader = new MessageLoader<TKey, TValue>(consumer ?? throw new ArgumentNullException(nameof(consumer)));
+
+            if (options?.OffsetTarget != null)
+            {
+                loader.OnConsumed += (_, offset) =>
+                {
+                    if (!options.OffsetTarget.Post(offset))
+                    {
+                        throw new InvalidOperationException("Target rejected offset!");
+                    }
+                };
+            }
+
+            return new CustomBlock<Message<TKey, TValue>>(loader.Load, options ?? new());
         }
 
         /// <summary>
@@ -46,9 +59,20 @@ namespace Confluent.Kafka.Dataflow
                 throw new ArgumentNullException(nameof(consumer));
             }
 
-            return new ActionBlock<TopicPartitionOffset>(
-                x => consumer.StoreOffset(new TopicPartitionOffset(x.TopicPartition, x.Offset + 1)),
-                options ?? new());
+            options ??= new();
+
+            var target = new ActionBlock<TopicPartitionOffset>(
+                tpo => consumer.StoreOffset(new TopicPartitionOffset(tpo.TopicPartition, tpo.Offset + 1)),
+                options);
+
+            return new ContinueBlock<TopicPartitionOffset>(
+                target,
+                () => Task.Factory.StartNew(
+                    consumer.Commit,
+                    options.CancellationToken,
+                    TaskCreationOptions.LongRunning,
+                    options.TaskScheduler),
+                options);
         }
 
         /// <summary>
@@ -68,10 +92,35 @@ namespace Confluent.Kafka.Dataflow
             TopicPartition topicPartition,
             ProduceBlockOptions? options = null)
         {
-            return new ProduceBlock<TKey, TValue>(
-                producer ?? throw new ArgumentNullException(nameof(producer)),
-                topicPartition ?? throw new ArgumentNullException(nameof(topicPartition)),
-                options ?? new ProduceBlockOptions());
+            if (producer == null)
+            {
+                throw new ArgumentNullException(nameof(producer));
+            }
+
+            if (topicPartition == null)
+            {
+                throw new ArgumentNullException(nameof(topicPartition));
+            }
+
+            options ??= new();
+
+            return new ActionBlock<Message<TKey, TValue>>(
+                async message =>
+                {
+                    var result = await producer.ProduceAsync(topicPartition, message).ConfigureAwait(false);
+                    options?.OffsetHandler?.Invoke(result.TopicPartitionOffset);
+                },
+                new()
+                {
+                    BoundedCapacity = options.BoundedCapacity,
+                    CancellationToken = options.CancellationToken,
+                    EnsureOrdered = options.EnsureOrdered,
+                    NameFormat = options.NameFormat,
+                    MaxMessagesPerTask = options.MaxMessagesPerTask,
+                    TaskScheduler = options.TaskScheduler,
+                    MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded,
+                    SingleProducerConstrained = false,
+                });
         }
     }
 }
