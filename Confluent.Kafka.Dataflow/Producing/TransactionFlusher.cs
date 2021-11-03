@@ -39,6 +39,7 @@ namespace Confluent.Kafka.Dataflow.Producing
                 }
                 catch (OperationCanceledException)
                 {
+                    source.Complete();
                 }
 
                 if (source.TryReceiveAll(out var items))
