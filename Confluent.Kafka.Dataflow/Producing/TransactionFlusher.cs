@@ -44,29 +44,23 @@ namespace Confluent.Kafka.Dataflow.Producing
 
                 if (source.TryReceiveAll(out var items))
                 {
-                    var offsets = new List<KeyValuePair<T, TopicPartitionOffset>>();
-                    var published = await this.transactor.Send(items, GetSourceOffsets()).ConfigureAwait(false);
+                    var itemOffsets = Enumerable.Range(0, items.Count)
+                        .Select(_ => new List<TopicPartitionOffset>())
+                        .ToArray();
 
-                    offsets.AddRange(published);
-                    var sorted = offsets.ToLookup(x => x.Key, x => x.Value);
+                    IEnumerable<TopicPartitionOffset> commitOffsets;
 
-                    foreach (var item in items)
+                    if (this.offsetSource == null)
                     {
-                        this.OnDelivered?.Invoke(item, sorted[item].ToArray());
+                        commitOffsets = Array.Empty<TopicPartitionOffset>();
                     }
-
-                    IEnumerable<TopicPartitionOffset> GetSourceOffsets()
+                    else
                     {
-                        if (this.offsetSource == null)
-                        {
-                            yield break;
-                        }
+                        var commitPositions = new Dictionary<TopicPartition, Offset>();
 
-                        var positions = new Dictionary<TopicPartition, Offset>();
-
-                        foreach (var item in items)
+                        for (var i = 0; i < items.Count; i++)
                         {
-                            var n = this.offsetMapping?.Invoke(item) ?? 1;
+                            var n = this.offsetMapping?.Invoke(items[i]) ?? 1;
 
                             while (n-- > 0)
                             {
@@ -75,15 +69,25 @@ namespace Confluent.Kafka.Dataflow.Producing
                                     throw new InvalidOperationException("No offset stored!");
                                 }
 
-                                offsets.Add(new KeyValuePair<T, TopicPartitionOffset>(item, tpo));
-                                positions[tpo.TopicPartition] = tpo.Offset;
+                                itemOffsets[i].Add(tpo);
+                                commitPositions[tpo.TopicPartition] = tpo.Offset;
                             }
                         }
 
-                        foreach (var kvp in positions)
-                        {
-                            yield return new TopicPartitionOffset(kvp.Key, kvp.Value + 1);
-                        }
+                        commitOffsets = commitPositions.Select(
+                            kvp => new TopicPartitionOffset(kvp.Key, kvp.Value + 1));
+                    }
+
+                    var published = await this.transactor.Send(items, commitOffsets).ConfigureAwait(false);
+
+                    foreach (var kvp in published)
+                    {
+                        itemOffsets[kvp.Key].Add(kvp.Value);
+                    }
+
+                    for (var i = 0; i < items.Count; i++)
+                    {
+                        this.OnDelivered?.Invoke(items[i], itemOffsets[i]);
                     }
                 }
             }

@@ -22,7 +22,7 @@ namespace Confluent.Kafka.Dataflow.Producing
             this.consumerMetadata = consumerMetadata;
         }
 
-        public async Task<IEnumerable<KeyValuePair<T, TopicPartitionOffset>>> Send(
+        public async Task<IEnumerable<KeyValuePair<int, TopicPartitionOffset>>> Send(
             IEnumerable<T> items,
             IEnumerable<TopicPartitionOffset> offsets)
         {
@@ -30,23 +30,24 @@ namespace Confluent.Kafka.Dataflow.Producing
 
             var produced = await Task.WhenAll(SendAll()).ConfigureAwait(false);
 
-            IEnumerable<Task<KeyValuePair<T, TopicPartitionOffset>>> SendAll()
+            IEnumerable<Task<KeyValuePair<int, TopicPartitionOffset>>> SendAll()
             {
-                foreach (var item in items)
+                var enumerator = items.GetEnumerator();
+                for (var index = 0; enumerator.MoveNext(); index++)
                 {
                     foreach (var sender in this.senders)
                     {
-                        foreach (var task in sender.Send(item))
+                        foreach (var task in sender.Send(enumerator.Current))
                         {
-                            yield return Wrap(item, task);
+                            yield return Wrap(index, task);
                         }
                     }
                 }
             }
 
-            static async Task<KeyValuePair<T, TopicPartitionOffset>> Wrap(T item, Task<TopicPartitionOffset> task)
+            static async Task<KeyValuePair<int, TopicPartitionOffset>> Wrap(int index, Task<TopicPartitionOffset> task)
             {
-                return new KeyValuePair<T, TopicPartitionOffset>(item, await task.ConfigureAwait(false));
+                return new KeyValuePair<int, TopicPartitionOffset>(index, await task.ConfigureAwait(false));
             }
 
             await Task.Factory.StartNew(

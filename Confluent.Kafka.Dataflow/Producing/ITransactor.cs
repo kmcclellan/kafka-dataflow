@@ -5,7 +5,7 @@ namespace Confluent.Kafka.Dataflow.Producing
 
     interface ITransactor<T>
     {
-        Task<IEnumerable<KeyValuePair<T, TopicPartitionOffset>>> Send(
+        Task<IEnumerable<KeyValuePair<int, TopicPartitionOffset>>> Send(
             IEnumerable<T> items,
             IEnumerable<TopicPartitionOffset> offsets);
     }

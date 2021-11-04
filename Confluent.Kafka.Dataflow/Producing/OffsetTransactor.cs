@@ -16,7 +16,7 @@ namespace Confluent.Kafka.Dataflow.Producing
             this.consumer = consumer;
         }
 
-        public async Task<IEnumerable<KeyValuePair<T, TopicPartitionOffset>>> Send(
+        public async Task<IEnumerable<KeyValuePair<int, TopicPartitionOffset>>> Send(
             IEnumerable<T> items,
             IEnumerable<TopicPartitionOffset> offsets)
         {
@@ -32,7 +32,7 @@ namespace Confluent.Kafka.Dataflow.Producing
                 TaskScheduler.Current)
                 .ConfigureAwait(false);
 
-            return Array.Empty<KeyValuePair<T, TopicPartitionOffset>>();
+            return Array.Empty<KeyValuePair<int, TopicPartitionOffset>>();
         }
     }
 }
