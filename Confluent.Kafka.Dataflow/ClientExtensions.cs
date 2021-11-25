@@ -56,28 +56,18 @@ namespace Confluent.Kafka.Dataflow
             Action<Message<TKey, TValue>, TopicPartitionOffset>? handler = null,
             DataflowBlockOptions? options = null)
         {
-            var buffer = new ConcurrentQueue<(Message<TKey, TValue>, TopicPartitionOffset)>();
+            var buffer = new OffsetBuffer<TKey, TValue>();
 
             var loader = new MessageLoader<TKey, TValue>(consumer ?? throw new ArgumentNullException(nameof(consumer)));
-            loader.OnConsumed += handler + Store;
-
-            void Store(Message<TKey, TValue> message, TopicPartitionOffset offset)
-            {
-                buffer.Enqueue((message, offset));
-            }
+            loader.OnConsumed += handler + buffer.Add;
 
             options ??= new();
 
             var target = new ActionBlock<Message<TKey, TValue>>(
                 message =>
                 {
-                    if (!buffer.TryDequeue(out var stored) || stored.Item1 != message)
-                    {
-                        throw new InvalidOperationException("Unexpected message.");
-                    }
-
-                    consumer.StoreOffset(
-                        new TopicPartitionOffset(stored.Item2.TopicPartition, stored.Item2.Offset + 1));
+                    var tpo = buffer.Retrieve(message);
+                    consumer.StoreOffset(new TopicPartitionOffset(tpo.TopicPartition, tpo.Offset + 1));
                 },
                 new()
                 {
