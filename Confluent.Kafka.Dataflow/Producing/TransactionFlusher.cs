@@ -12,18 +12,15 @@ namespace Confluent.Kafka.Dataflow.Producing
     {
         readonly ITransactor<T> transactor;
         readonly TimeSpan interval;
-        readonly IProducerConsumerCollection<TopicPartitionOffset>? offsetSource;
-        readonly Func<T, int>? offsetMapping;
+        readonly Func<T, IEnumerable<TopicPartitionOffset>>? offsetMapping;
 
         public TransactionFlusher(
             ITransactor<T> transactor,
             TimeSpan interval,
-            IProducerConsumerCollection<TopicPartitionOffset>? offsetSource,
-            Func<T, int>? offsetMapping)
+            Func<T, IEnumerable<TopicPartitionOffset>>? offsetMapping)
         {
             this.transactor = transactor;
             this.interval = interval;
-            this.offsetSource = offsetSource;
             this.offsetMapping = offsetMapping;
         }
 
@@ -50,7 +47,7 @@ namespace Confluent.Kafka.Dataflow.Producing
 
                     IEnumerable<TopicPartitionOffset> commitOffsets;
 
-                    if (this.offsetSource == null)
+                    if (this.offsetMapping == null)
                     {
                         commitOffsets = Array.Empty<TopicPartitionOffset>();
                     }
@@ -60,15 +57,8 @@ namespace Confluent.Kafka.Dataflow.Producing
 
                         for (var i = 0; i < items.Count; i++)
                         {
-                            var n = this.offsetMapping?.Invoke(items[i]) ?? 1;
-
-                            while (n-- > 0)
+                            foreach (var tpo in this.offsetMapping(items[i]))
                             {
-                                if (!this.offsetSource.TryTake(out var tpo))
-                                {
-                                    throw new InvalidOperationException("No offset stored!");
-                                }
-
                                 itemOffsets[i].Add(tpo);
                                 commitPositions[tpo.TopicPartition] = tpo.Offset;
                             }

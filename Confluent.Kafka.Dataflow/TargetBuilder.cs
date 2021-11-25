@@ -22,8 +22,7 @@ namespace Confluent.Kafka.Dataflow
         readonly List<IMessageSender<T>> messageSenders = new();
 
         IClient? producerHandle;
-        IProducerConsumerCollection<TopicPartitionOffset>? offsetSource;
-        Func<T, int>? offsetMapping;
+        Func<T, IEnumerable<TopicPartitionOffset>>? offsetMapping;
         IConsumerGroupMetadata? consumerMetadata;
         ITransactor<T>? commitTransactor;
 
@@ -106,11 +105,26 @@ namespace Confluent.Kafka.Dataflow
 
             var offsets = new ConcurrentQueue<TopicPartitionOffset>();
             loader.OnConsumed += (_, tpo) => offsets.Enqueue(tpo);
-            this.offsetSource = offsets;
 
             source = new CustomBlock<Message<TKey, TValue>>(loader.Load, options ?? new());
 
-            this.offsetMapping = mapping;
+            this.offsetMapping = GetOffsets;
+
+            IEnumerable<TopicPartitionOffset> GetOffsets(T item)
+            {
+                var n = mapping?.Invoke(item) ?? 1;
+
+                while (n-- > 0)
+                {
+                    if (!offsets.TryDequeue(out var tpo))
+                    {
+                        throw new InvalidOperationException("No offset stored!");
+                    }
+
+                    yield return tpo;
+                }
+            }
+
             this.consumerMetadata = consumer.ConsumerGroupMetadata;
             this.commitTransactor = new OffsetTransactor<T, TKey, TValue>(consumer);
 
@@ -173,7 +187,6 @@ namespace Confluent.Kafka.Dataflow
             var flusher = new TransactionFlusher<T>(
                 transactor,
                 interval ?? TimeSpan.FromSeconds(5),
-                this.offsetSource,
                 this.offsetMapping);
 
             flusher.OnDelivered += handler;
