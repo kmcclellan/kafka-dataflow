@@ -86,6 +86,9 @@ namespace Confluent.Kafka.Dataflow
         /// <see langword="null"/>).
         /// </param>
         /// <returns>The same instance for chaining.</returns>
+        [Obsolete(
+            "Message order need not be preserved in all cases (multi-partition scenarios). " +
+            "Use overload with explict source message mapping.")]
         public TargetBuilder<T> AsStream<TKey, TValue>(
             IConsumer<TKey, TValue> consumer,
             out ISourceBlock<Message<TKey, TValue>> source,
@@ -112,6 +115,33 @@ namespace Confluent.Kafka.Dataflow
             this.commitTransactor = new OffsetTransactor<T, TKey, TValue>(consumer);
 
             return this;
+        }
+
+        /// <summary>
+        /// Configures the target as a stream with a linked source.
+        /// </summary>
+        /// <remarks>
+        /// Source offsets will be committed transactionally with produced messages. Consumer must have
+        /// <c>enable.auto.commit</c> set to false.
+        /// </remarks>
+        /// <typeparam name="TKey">The consumer key type.</typeparam>
+        /// <typeparam name="TValue">The consumer value type.</typeparam>
+        /// <param name="consumer">The consumer to use as the source for Kafka messages.</param>
+        /// <param name="source">The linked source instance.</param>
+        /// <param name="mapping">
+        /// A delegate mapping <typeparamref name="T"/> to zero or more source Kafka messages.
+        /// </param>
+        /// <param name="handler">A delegate invoked for each source Kafka message (before offering to targets).</param>
+        /// <param name="options">Block options for source consuming.</param>
+        /// <returns>The same instance for chaining.</returns>
+        public TargetBuilder<T> AsStream<TKey, TValue>(
+            IConsumer<TKey, TValue> consumer,
+            out ISourceBlock<Message<TKey, TValue>> source,
+            Func<T, IEnumerable<Message<TKey, TValue>>> mapping,
+            Action<Message<TKey, TValue>, TopicPartitionOffset>? handler = null,
+            DataflowBlockOptions? options = null)
+        {
+            throw new NotImplementedException();
         }
 
         /// <summary>
