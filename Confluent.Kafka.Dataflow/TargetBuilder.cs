@@ -155,7 +155,32 @@ namespace Confluent.Kafka.Dataflow
             Action<Message<TKey, TValue>, TopicPartitionOffset>? handler = null,
             DataflowBlockOptions? options = null)
         {
-            throw new NotImplementedException();
+            if (this.consumerMetadata != null)
+            {
+                throw new InvalidOperationException("Already configured as a stream!");
+            }
+
+            var offsets = new OffsetBuffer<TKey, TValue>();
+
+            var loader = new MessageLoader<TKey, TValue>(consumer ?? throw new ArgumentNullException(nameof(consumer)));
+            loader.OnConsumed += handler + offsets.Add;
+
+            source = new CustomBlock<Message<TKey, TValue>>(loader.Load, options ?? new());
+
+            this.offsetMapping = GetOffsets;
+
+            IEnumerable<TopicPartitionOffset> GetOffsets(T item)
+            {
+                foreach (var message in mapping(item))
+                {
+                    yield return offsets.Retrieve(message);
+                }
+            }
+
+            this.consumerMetadata = consumer.ConsumerGroupMetadata;
+            this.commitTransactor = new OffsetTransactor<T, TKey, TValue>(consumer);
+
+            return this;
         }
 
         /// <summary>
