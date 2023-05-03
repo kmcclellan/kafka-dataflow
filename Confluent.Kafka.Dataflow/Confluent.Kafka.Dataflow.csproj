@@ -1,40 +1,45 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net5.0;netstandard2.0</TargetFrameworks>
-    <LangVersion>9.0</LangVersion>
-    <Nullable>enable</Nullable>
-    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
-    <AnalysisLevel>latest</AnalysisLevel>
-    <AnalysisMode>AllEnabledByDefault</AnalysisMode>
+    <AnalysisMode>all</AnalysisMode>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CA1014</NoWarn>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Confluent.Kafka.Dataflow</RootNamespace>
+    <TargetFrameworks>netstandard2.0;net5.0</TargetFrameworks>
   </PropertyGroup>
 
   <PropertyGroup>
-    <Title>Kafka Dataflow</Title>
     <Authors>Kyle McClellan</Authors>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageIcon>icon.png</PackageIcon>
-    <PackageProjectUrl>https://github.com/kmcclellan/kafka-dataflow</PackageProjectUrl>
+    <Copyright>%A9 2021-2023 Kyle McClellan</Copyright>
     <Description>An extension of Confluent.Kafka for use with Microsoft.Extensions.Dataflow.</Description>
-    <PackageReleaseNotes>https://github.com/kmcclellan/kafka-dataflow/releases/v$(Version)</PackageReleaseNotes>
-    <Copyright>%A9 2021 Kyle McClellan</Copyright>
-    <PackageTags>kafka;confluent;dataflow</PackageTags>
-    <RepositoryType>git</RepositoryType>
-    <RepositoryUrl>https://github.com/kmcclellan/kafka-dataflow.git</RepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <IncludeSymbols>true</IncludeSymbols>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/kmcclellan/kafka-dataflow</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>https://github.com/kmcclellan/kafka-dataflow/releases/v$(Version)</PackageReleaseNotes>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <PackageTags>kafka;confluent;dataflow</PackageTags>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-    <EmbedAllSources>true</EmbedAllSources>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="../icon.png" Pack="true" PackagePath="/" />
+    <AssemblyAttribute Include="System.CLSCompliantAttribute">
+      <_Parameter1>true</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Confluent.Kafka" Version="*" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="*" PrivateAssets="All" />
     <PackageReference Include="System.Threading.Tasks.Dataflow" Version="5.0.*" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md;..\icon.png" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>

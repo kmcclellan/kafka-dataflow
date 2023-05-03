@@ -10,8 +10,8 @@ An extension of [Confluent's Kafka client](https://github.com/confluentinc/confl
 
 Add the NuGet package to your project:
 
-    $ dotnet add package kafka-dataflow
-
+    $ dotnet add package Confluent.Kafka.Dataflow
+    
 ## Usage
 
 ### Consuming using `ISourceBlock<T>`
